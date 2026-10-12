@@ -67,14 +67,19 @@ func Pack(dir string, opts Options) (*Result, error) {
 	if !info.IsDir() {
 		return nil, problem("%s is not a directory. Deploy the directory the build writes the site to (dist, build or out).", dir)
 	}
+	// The directory itself may be a link the person gave on purpose (dist -> build); it is followed once, here. Everything below it is read through this root and never leaves it.
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, problem("cannot read %s: %v", dir, err)
+	}
 	if !opts.Force {
 		for _, marker := range projectMarkers {
-			if _, err := os.Lstat(filepath.Join(dir, marker)); err == nil {
+			if _, err := os.Lstat(filepath.Join(root, marker)); err == nil {
 				return nil, problem("%s has %s: it looks like a project, not a build output. Deploy the directory the build writes to (dist, build or out). Everything in it is published on the internet. --force deploys it anyway.", dir, marker)
 			}
 		}
 	}
-	files, unpacked, err := collect(dir, opts)
+	files, unpacked, err := collect(root, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -93,12 +98,20 @@ func Pack(dir string, opts Options) (*Result, error) {
 			return nil, problem("%s has no index.html at its top. Did the build run? --allow-no-index deploys it anyway.", dir)
 		}
 	}
-	return write(files, unpacked)
+	if afterScan != nil {
+		afterScan() // a test changes the directory here: between the check and the use
+	}
+	return write(root, files, unpacked)
 }
+
+// afterScan is for the tests: the moment between the scan (a file is a plain file) and the reading of it.
+var afterScan func()
 
 type file struct {
 	rel, abs string
 	size     int64
+	// info is what the scan saw (an lstat, not following a link): the file that is read must be this one.
+	info fs.FileInfo
 }
 
 func collect(dir string, opts Options) ([]file, int64, error) {
@@ -152,7 +165,7 @@ func collect(dir string, opts Options) ([]file, int64, error) {
 		if len(files) >= MaxEntries {
 			return problem("the site has more than %d files.", MaxEntries)
 		}
-		files = append(files, file{rel: rel, abs: p, size: info.Size()})
+		files = append(files, file{rel: rel, abs: p, size: info.Size(), info: info})
 		return nil
 	})
 	if err != nil {
@@ -169,7 +182,13 @@ func collect(dir string, opts Options) ([]file, int64, error) {
 func depth(rel string) int { return strings.Count(path.Clean(rel), "/") + 1 }
 
 // write makes the tar.gz: files only (the directories are implied), in order, with no owner, no time and fixed modes, so the same files always make the same bytes.
-func write(files []file, unpacked int64) (*Result, error) {
+func write(rootDir string, files []file, unpacked int64) (*Result, error) {
+	// Files are opened through the root: the system refuses a path that leaves the directory (a ".." or a link that points out, in the name or in a directory of it), whatever was changed since the scan.
+	root, err := os.OpenRoot(rootDir)
+	if err != nil {
+		return nil, problem("cannot read %s: %v", rootDir, err)
+	}
+	defer root.Close()
 	out, err := os.CreateTemp("", "koedodb-site-*.tar.gz")
 	if err != nil {
 		return nil, fmt.Errorf("cannot make a temporary file: %w", err)
@@ -189,9 +208,14 @@ func write(files []file, unpacked int64) (*Result, error) {
 	}
 	tw := tar.NewWriter(gz)
 	for _, f := range files {
-		in, err := os.Open(f.abs)
+		in, err := root.Open(filepath.FromSlash(f.rel))
 		if err != nil {
-			return nil, problem("cannot read %s: %v", f.rel, err)
+			return nil, problem("cannot read %s: %v. It changed while it was being packed (a link in its place?).", f.rel, err)
+		}
+		// What was opened is checked, not the name: a plain file, of the size the scan saw, and the very file the scan saw (not another that took its name, and not what a link points to).
+		if st, err := in.Stat(); err != nil || !st.Mode().IsRegular() || st.Size() != f.size || !os.SameFile(f.info, st) {
+			in.Close()
+			return nil, problem("%s changed while it was being packed (it is not the file that was checked). Run it again.", f.rel)
 		}
 		hdr := &tar.Header{Name: f.rel, Typeflag: tar.TypeReg, Mode: 0o644, Size: f.size, ModTime: time.Unix(0, 0)}
 		if err := tw.WriteHeader(hdr); err != nil {

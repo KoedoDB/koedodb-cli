@@ -11,6 +11,7 @@ Please do not open a public issue. Write to **security@koedodb.com**, or use Git
 - The deploy token is read from the environment (`KOEDODB_TOKEN`), never from a flag. It is sent to the KoedoDB API and to nothing else: the upload URL it gets back is for the object store and carries its own signature, so the token is not sent there.
 - Neither the token nor the upload URL is printed, in a message or in an error.
 - It packs only plain files, refuses a directory that looks like a project (a `package.json`, a `.git`, a `node_modules`) or has a `.env` file, and makes no network call until the directory is accepted.
+- It reads the files through the directory it was given (`os.Root`: the system refuses a path that leaves it, in the name or in a directory of it), and checks that what it opened is the plain file the scan saw. A file or a directory that another process swaps for a link between the scan and the reading (to put a file of yours outside the directory into the site) is refused, not followed.
 - The API address must be https (a loopback address is allowed, for tests).
 
 ## The releases

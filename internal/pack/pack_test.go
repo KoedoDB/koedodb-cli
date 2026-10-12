@@ -187,3 +187,103 @@ func TestForceAndAllowNoIndexLetThroughWhatTheyAreFor(t *testing.T) {
 	}
 	os.Remove(r.Path)
 }
+
+// swapAfterScan makes the change between the scan and the reading, as another process could.
+func swapAfterScan(t *testing.T, change func()) {
+	t.Helper()
+	afterScan = change
+	t.Cleanup(func() { afterScan = nil })
+}
+
+func TestAFileSwappedForALinkAfterTheScanIsNotReadAndWhatItPointsAtIsNotPacked(t *testing.T) {
+	// The file outside is exactly as long as the one it takes the place of: a difference of size would refuse it for that reason, and hide whether the link itself is.
+	secret := "PRIVATE KEY OUTSIDE THE DIRECTORY"
+	outside := filepath.Join(t.TempDir(), "id_rsa")
+	if err := os.WriteFile(outside, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := site(t, map[string]string{"index.html": "hi", "assets/app.js": strings.Repeat("x", len(secret))})
+	swapAfterScan(t, func() {
+		p := filepath.Join(dir, "assets", "app.js")
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, p); err != nil {
+			t.Skip("no symbolic links here")
+		}
+	})
+	r, err := Pack(dir, Options{})
+	var p *Problem
+	if err == nil || !errors.As(err, &p) || !strings.Contains(err.Error(), "app.js") || r != nil {
+		t.Fatalf("a link in the place of a file: %v %+v", err, r)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(os.TempDir(), "koedodb-site-*.tar.gz")); len(matches) > 0 {
+		for _, m := range matches {
+			if data, _ := os.ReadFile(m); strings.Contains(string(data), "PRIVATE KEY") {
+				t.Errorf("an archive was left with the outside file in it: %s", m)
+			}
+		}
+	}
+}
+
+func TestADirectorySwappedForALinkAfterTheScanDoesNotLetTheFilesOutsideIn(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "app.js"), []byte("OUTSIDE"), 0o600); err != nil { // as long as "inside!" below
+		t.Fatal(err)
+	}
+	dir := site(t, map[string]string{"index.html": "hi", "assets/app.js": "inside!"})
+	swapAfterScan(t, func() {
+		if err := os.RemoveAll(filepath.Join(dir, "assets")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(dir, "assets")); err != nil {
+			t.Skip("no symbolic links here")
+		}
+	})
+	if r, err := Pack(dir, Options{}); err == nil {
+		os.Remove(r.Path)
+		t.Fatal("a directory that became a link to the outside was packed")
+	}
+}
+
+func TestAFileReplacedByAnotherAfterTheScanIsRefusedAndAnUnchangedOneIsNot(t *testing.T) {
+	dir := site(t, map[string]string{"index.html": "hi", "other.txt": "somebody else's file"})
+	swapAfterScan(t, func() {
+		// Another plain file renamed over the name: not the file that was checked (the size is the same too).
+		replacement := filepath.Join(dir, "replacement")
+		if err := os.WriteFile(replacement, []byte("hi"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(replacement, filepath.Join(dir, "index.html")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if r, err := Pack(dir, Options{}); err == nil || !strings.Contains(err.Error(), "changed while it was being packed") {
+		if r != nil {
+			os.Remove(r.Path)
+		}
+		t.Fatalf("a file replaced after the scan: %v", err)
+	}
+	// With nothing changed, the same directory packs.
+	afterScan = nil
+	r, err := Pack(dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(r.Path)
+}
+
+func TestADirectoryGivenAsALinkIsFollowedOnceAndItsFilesAreStillReadThroughTheRoot(t *testing.T) {
+	real := site(t, map[string]string{"index.html": "hi", "a/b.txt": "b"})
+	link := filepath.Join(t.TempDir(), "dist")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip("no symbolic links here")
+	}
+	r, err := Pack(link, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, r); got["index.html"] != "hi" || got["a/b.txt"] != "b" || len(got) != 2 {
+		t.Errorf("files: %v", got)
+	}
+}
