@@ -287,3 +287,45 @@ func TestADirectoryGivenAsALinkIsFollowedOnceAndItsFilesAreStillReadThroughTheRo
 		t.Errorf("files: %v", got)
 	}
 }
+
+func TestTheNamesOfSecretsAreRefusedWhateverTheirCaseAndAnywhereInTheDirectory(t *testing.T) {
+	for what, files := range map[string]map[string]string{
+		"an upper-case .ENV":           {"index.html": "x", ".ENV": "S=1"},
+		"a mixed-case .Env.Production": {"index.html": "x", "api/.Env.Production": "S=1"},
+		"an upper-case PACKAGE.JSON":   {"index.html": "x", "PACKAGE.JSON": "{}"},
+		"an .npmrc":                    {"index.html": "x", ".npmrc": "//registry.npmjs.org/:_authToken=abc"},
+		"a .NETRC":                     {"index.html": "x", "deep/.NETRC": "machine x login y password z"},
+		"an .aws directory":            {"index.html": "x", ".aws/credentials": "[default]"},
+		"a .ssh directory":             {"index.html": "x", "backup/.ssh/config": "Host x"},
+		"an id_rsa":                    {"index.html": "x", "keys/id_rsa": "-----BEGIN"},
+		"an id_ed25519":                {"index.html": "x", "ID_ED25519": "-----BEGIN"},
+		"a .htpasswd":                  {"index.html": "x", ".htpasswd": "user:hash"},
+	} {
+		dir := site(t, files)
+		r, err := Pack(dir, Options{})
+		var p *Problem
+		if err == nil || !errors.As(err, &p) {
+			if r != nil {
+				os.Remove(r.Path)
+			}
+			t.Errorf("%s was packed", what)
+			continue
+		}
+		if !strings.Contains(err.Error(), "--force") {
+			t.Errorf("%s: the message does not say how to override: %v", what, err)
+		}
+		// --force is for the person who means it.
+		if forced, err := Pack(dir, Options{Force: true}); err != nil {
+			t.Errorf("%s with --force: %v", what, err)
+		} else {
+			os.Remove(forced.Path)
+		}
+	}
+	// A name that only looks like one is kept.
+	dir := site(t, map[string]string{"index.html": "x", "assets/ssh-guide.html": "y", "docs/aws-pricing.txt": "z", "id_rsa_explained.html": "w", ".envelope.txt": "v"})
+	r, err := Pack(dir, Options{})
+	if err != nil {
+		t.Fatalf("a name that only looks like a secret: %v", err)
+	}
+	os.Remove(r.Path)
+}

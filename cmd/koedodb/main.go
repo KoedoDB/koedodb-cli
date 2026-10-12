@@ -152,14 +152,24 @@ func runDeploy(ctx context.Context, args []string, env func(string) string, stdo
 	if token == "" {
 		return fail(exitAuth, "no_token", tokenVarName+" is not set. Make a deploy token for the project in the KoedoDB console and set it in the environment.")
 	}
+	if !validToken(token) {
+		// Not echoed: it may be a secret that was set wrong (a line break in it would make a header of the request).
+		return fail(exitAuth, "invalid_token", tokenVarName+" has a character a token does not have (a space or a line break inside, or something that is not plain text). Copy the token again from the console.")
+	}
 	if apiURL == "" {
 		apiURL = env("KOEDODB_API_URL")
 	}
 	if apiURL == "" {
 		apiURL = defaultAPI
 	}
-	if u, err := url.Parse(apiURL); err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost"))) {
-		return fail(exitUsage, "usage", "the API address must be an https address.")
+	u, err := url.Parse(apiURL)
+	loopback := err == nil && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1")
+	if err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && loopback)) || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fail(exitUsage, "usage", "the API address must be an https address of a host and a path, with no user name, query or fragment.")
+	}
+	// The token goes to this address. If something other than the console's own address set it (an environment file a tool loaded, say), it is better to be told than to find out.
+	if !loopback && !trustedHost(u.Hostname()) && !asJSON {
+		fmt.Fprintf(stderr, "koedodb: the token is sent to %s, which is not a koedodb.com address. If you did not set %s or --api yourself, stop and check.\n", u.Host, "KOEDODB_API_URL")
 	}
 	client := &api.Client{BaseURL: apiURL, Token: token, UserAgent: "koedodb-cli/" + versionString(), HTTP: httpClient}
 	var progress io.Writer = stderr
@@ -175,8 +185,8 @@ func runDeploy(ctx context.Context, args []string, env func(string) string, stdo
 		_ = json.NewEncoder(stdout).Encode(result)
 		return exitOK
 	}
-	if result.URL != "" {
-		fmt.Fprintf(stdout, "%s\n", result.URL)
+	if shown := printableURL(result.URL); shown != "" {
+		fmt.Fprintf(stdout, "%s\n", shown)
 	}
 	return exitOK
 }
@@ -217,4 +227,37 @@ func classify(err error) (int, string, string) {
 		return exitFailed, "api_error", err.Error()
 	}
 	return exitFailed, "error", err.Error()
+}
+
+// validToken is plain visible ASCII with no space, at most 512 characters: what a token is made of. A line break in it would make a header of the request.
+func validToken(token string) bool {
+	if len(token) == 0 || len(token) > 512 {
+		return false
+	}
+	for i := 0; i < len(token); i++ {
+		if token[i] < 0x21 || token[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+// trustedHost says whether a host is KoedoDB's own.
+func trustedHost(host string) bool {
+	host = strings.ToLower(host)
+	return host == "koedodb.com" || strings.HasSuffix(host, ".koedodb.com")
+}
+
+// printableURL is the address of the site as it is shown on a terminal: an https address of plain characters, or nothing. It comes from the server, and a terminal obeys the escape sequences in what it is
+// shown. (With --json it is a string of JSON, which cannot carry them.)
+func printableURL(raw string) string {
+	if !strings.HasPrefix(raw, "https://") || len(raw) > 2048 {
+		return ""
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] < 0x21 || raw[i] > 0x7e {
+			return ""
+		}
+	}
+	return raw
 }

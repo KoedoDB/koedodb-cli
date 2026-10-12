@@ -249,3 +249,54 @@ func TestUsageMistakesAndTheTokenAreCheckedBeforeAnythingIsSent(t *testing.T) {
 	}
 	_ = strconv.Itoa
 }
+
+func TestATokenWithAnythingButPlainVisibleCharactersIsRefusedAndNeverEchoed(t *testing.T) {
+	f := newFake(t)
+	dir := site(t, map[string]string{"index.html": "x"})
+	for what, bad := range map[string]string{
+		"a line break inside": "kdb_abc\ndef", "a carriage return": "kdb_abc\rdef", "a space inside": "kdb_abc def", "a tab": "kdb_abc\tdef", "not ASCII": "kdb_ab\u00e9cdef",
+		"too long": "kdb_" + strings.Repeat("a", 600),
+	} {
+		code, out, errOut := f.run([]string{"deploy", dir}, bad)
+		if code != exitAuth || !strings.Contains(errOut, "has a character a token does not have") || strings.Contains(out+errOut, "abc") || len(f.apiAuth) != 0 {
+			t.Errorf("%s: exit %d, err %q", what, code, errOut)
+		}
+	}
+}
+
+func TestAnAPIAddressWithALoginAQueryOrAFragmentIsRefusedAndAStrangerAddressIsTold(t *testing.T) {
+	f := newFake(t)
+	dir := site(t, map[string]string{"index.html": "x"})
+	for _, bad := range []string{"https://user:pass@api.koedodb.com/v1", "https://api.koedodb.com/v1?x=1", "https://api.koedodb.com/v1#x", "http://api.koedodb.com/v1", "https:///v1", "api.koedodb.com/v1"} {
+		if code, _, _ := f.run([]string{"deploy", dir, "--api", bad}, token); code != exitUsage || len(f.apiAuth) != 0 {
+			t.Errorf("%q: exit %d", bad, code)
+		}
+	}
+	// An address that is not koedodb.com's (and not this machine's) is told before the token is sent; with --json the output stays one object.
+	_, _, errOut := f.run([]string{"deploy", dir, "--api", "https://api.example.invalid/v1"}, token)
+	if !strings.Contains(errOut, "the token is sent to api.example.invalid") || !strings.Contains(errOut, "not a koedodb.com address") || strings.Contains(errOut, token) {
+		t.Errorf("a stranger address is not told: %q", errOut)
+	}
+	if _, _, errOut := f.run([]string{"deploy", dir, "--json", "--api", "https://api.example.invalid/v1"}, token); strings.Contains(errOut, "the token is sent") {
+		t.Errorf("--json prints a note: %q", errOut)
+	}
+	// Its own address, and this machine's, are not told.
+	if _, _, errOut := f.run([]string{"deploy", dir, "--api", "https://api.koedodb.com/v1"}, token); strings.Contains(errOut, "the token is sent") {
+		t.Errorf("koedodb.com is told: %q", errOut)
+	}
+	if code, _, errOut := f.run([]string{"deploy", dir}, token); code != 0 || strings.Contains(errOut, "the token is sent") {
+		t.Errorf("loopback: %d %q", code, errOut)
+	}
+}
+
+func TestTheSiteAddressFromTheServerIsPrintedOnlyIfItIsPlain(t *testing.T) {
+	for url, shown := range map[string]string{
+		"https://my-app.koedodb.dev":                        "https://my-app.koedodb.dev",
+		"https://my-app.koedodb.dev\x1b[2J\x1b]0;pwned\x07": "", "https://my-app.koedodb.dev/\nsecond line": "", "http://my-app.koedodb.dev": "", "javascript:alert(1)": "", "": "",
+		"https://" + strings.Repeat("a", 3000): "",
+	} {
+		if got := printableURL(url); got != shown {
+			t.Errorf("%q: %q", url, got)
+		}
+	}
+}

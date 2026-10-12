@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -59,12 +60,31 @@ type Site struct {
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
+// client never follows a redirect. The API does not redirect, and a redirect would carry the token to wherever it points (the same domain's other hosts, or the same host in clear text after a
+// downgrade to http): it is an error to be told, not a road to follow. The same for the object store.
 func (c *Client) client() *http.Client {
+	var client http.Client
 	if c.HTTP != nil {
-		return c.HTTP
+		client = *c.HTTP
+	} else {
+		client = http.Client{Timeout: 30 * time.Second, Transport: transport()}
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &client
 }
+
+// transport is the default one with the time to connect and to hear the first answer bounded (the body of an upload takes as long as the line does).
+func transport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.TLSHandshakeTimeout = 15 * time.Second
+	t.ResponseHeaderTimeout = 2 * time.Minute
+	return t
+}
+
+// UploadTimeout is the most the upload of an archive may take (100 MiB at 0.5 Mbit/s is 27 minutes).
+const UploadTimeout = 30 * time.Minute
+
+var codePattern = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
 	var reader io.Reader
@@ -98,6 +118,13 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 			Error string `json:"error"`
 		}
 		_ = json.Unmarshal(raw, &failure)
+		// The code is shown to the person: it is what the API's codes are made of, or it is dropped (a terminal obeys the escape sequences in what a server sends).
+		if !codePattern.MatchString(failure.Error) {
+			failure.Error = ""
+		}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 && failure.Error == "" {
+			failure.Error = "unexpected_redirect"
+		}
 		return &Error{Status: resp.StatusCode, Code: failure.Error}
 	}
 	if out != nil {
@@ -143,7 +170,10 @@ func (c *Client) Put(ctx context.Context, up Upload, file string, size int64) er
 	if c.UserAgent != "" {
 		req.Header.Set("User-Agent", c.UserAgent)
 	}
-	// An upload takes as long as the line does; the limit is the context's.
+	// An upload takes as long as the line does: no limit on the body, but the whole of it is bounded by UploadTimeout.
+	ctx, cancel := context.WithTimeout(ctx, UploadTimeout)
+	defer cancel()
+	req = req.WithContext(ctx)
 	client := *c.client()
 	client.Timeout = 0
 	resp, err := client.Do(req)

@@ -56,7 +56,18 @@ func problem(format string, args ...any) error { return &Problem{Msg: fmt.Sprint
 // projectMarkers are what a project's root has and a build output does not.
 var projectMarkers = []string{".git", "node_modules", "package.json", "go.mod", "pyproject.toml", "requirements.txt", "Cargo.toml", "Dockerfile"}
 
-func isEnvFile(name string) bool { return name == ".env" || strings.HasPrefix(name, ".env.") }
+// File systems of macOS and Windows do not tell .ENV from .env: neither do we.
+func isEnvFile(name string) bool {
+	name = strings.ToLower(name)
+	return name == ".env" || strings.HasPrefix(name, ".env.")
+}
+
+// credentials are the files and directories that keep a person's logins, which a build output has no use for and the internet must not see: the tokens of a package registry, a network login,
+// the keys of ssh and of the cloud. Anywhere in the directory, by name.
+var credentials = map[string]bool{
+	".npmrc": true, ".netrc": true, ".pypirc": true, ".htpasswd": true, ".aws": true, ".ssh": true, ".gnupg": true, ".docker": true,
+	"id_rsa": true, "id_dsa": true, "id_ecdsa": true, "id_ed25519": true,
+}
 
 // Pack makes the archive of dir in a temporary file.
 func Pack(dir string, opts Options) (*Result, error) {
@@ -73,9 +84,16 @@ func Pack(dir string, opts Options) (*Result, error) {
 		return nil, problem("cannot read %s: %v", dir, err)
 	}
 	if !opts.Force {
-		for _, marker := range projectMarkers {
-			if _, err := os.Lstat(filepath.Join(root, marker)); err == nil {
-				return nil, problem("%s has %s: it looks like a project, not a build output. Deploy the directory the build writes to (dist, build or out). Everything in it is published on the internet. --force deploys it anyway.", dir, marker)
+		// By name, the way the file system sees it: Package.json is a package.json on a Mac or on Windows.
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			return nil, problem("cannot read %s: %v", dir, err)
+		}
+		for _, entry := range entries {
+			for _, marker := range projectMarkers {
+				if strings.EqualFold(entry.Name(), marker) {
+					return nil, problem("%s has %s: it looks like a project, not a build output. Deploy the directory the build writes to (dist, build or out). Everything in it is published on the internet. --force deploys it anyway.", dir, entry.Name())
+				}
 			}
 		}
 	}
@@ -131,9 +149,11 @@ func collect(dir string, opts Options) ([]file, int64, error) {
 		rel = filepath.ToSlash(rel)
 		name := d.Name()
 		switch {
-		case d.IsDir() && name == ".git":
+		case d.IsDir() && strings.EqualFold(name, ".git"):
 			return filepath.SkipDir
-		case d.IsDir() && name == "node_modules":
+		case credentials[strings.ToLower(name)] && !opts.Force:
+			return problem("%s is a file of logins or keys. Everything in the site is published on the internet. Take it out (--force keeps it).", rel)
+		case d.IsDir() && strings.EqualFold(name, "node_modules"):
 			return problem("%s is in the site. node_modules is not part of a build output.", rel)
 		case name == ".DS_Store":
 			return nil
