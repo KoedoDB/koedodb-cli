@@ -1,0 +1,14 @@
+# What is behind is told as a pull request, once a week: the Go modules (none outside the standard library today) and the actions of the workflows, which are pinned by commit and so do not move by
+# themselves. The Go of go.mod is not Dependabot's: .github/workflows/vulncheck.yml watches it.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
