@@ -1,6 +1,6 @@
 # koedodb-cli
 
-The command line of [KoedoDB](https://koedodb.com). For now it does one thing: **deploy a static site**.
+The command line of [KoedoDB](https://koedodb.com). It **deploys a static site**, and **makes and deletes branches** of a project's database.
 
 ```sh
 export KOEDODB_TOKEN=...        # a deploy token, made for the project in the KoedoDB console
@@ -60,11 +60,36 @@ A person or an AI tool most easily deploys the **whole project** instead of its 
 - With no directory given, it takes the first of `dist`, `build`, `out` that exists.
 - It prints neither the token nor the upload URL, in messages or errors.
 
+## Branches
+
+A branch is an empty database of its own, for a pull request or a try (your CI runs the migrations on it). It is a project of the same kind as the one it comes from, with its own keys and its own password. Branches are part of the beta: a project may have 2 besides `main`.
+
+```sh
+export KOEDODB_ACCESS_TOKEN=...     # the access token of your KoedoDB login (not the deploy token)
+export KOEDODB_ORGANIZATION=3f2c9a52-0d7e-4b1f-9a64-5c2e8d1b7f30
+export KOEDODB_PROJECT=7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
+
+koedodb branch create pr-123 --days 3   # prints where it answers, and its password, once
+koedodb branch list
+koedodb branch get pr-123
+koedodb branch delete pr-123 --yes      # the database goes at once
+```
+
+- A name is lower-case letters, digits and hyphens (40 characters at most; not `main`). `--days N` makes the branch go away by itself after N days; without it, it stays until you delete it.
+- `create` prints the host, port, database, user and an address **without** the password, and the password on its own line. The password is shown **once**: keep it. With `--json` it is the `password` field of the one object printed. If KoedoDB could not make a password with the branch, it says so, and you ask for one in the console.
+- The database answers straight on port 5432 (not through the pooler).
+- `main` is the project's own database: it cannot be deleted here.
+- `delete` never asks a question: it needs `--yes`.
+- The project is named by the ids of its organization and of itself (`--organization`, `--project`, or the two variables above); they are in the address of the project in the console. Flags win over the environment.
+- Exit status: `0` done, `1` anything else, `2` used wrongly, `3` no token or not accepted (or not allowed: making and deleting branches needs the owner or an admin of the project), `4` KoedoDB refused the request and the message says why (a name in use, the limit of branches, `main`, no such branch), `5` KoedoDB or the network did not answer as it should (run it again). When a host has no room for another database it says so (`no_capacity`, exit `5`): nothing was queued and nothing was made.
+
 ## Settings
 
 | | |
 |---|---|
-| `KOEDODB_TOKEN` | the deploy token (required) |
+| `KOEDODB_TOKEN` | the deploy token (required for `deploy`) |
+| `KOEDODB_ACCESS_TOKEN` | the access token of your login (required for `branch`) |
+| `KOEDODB_ORGANIZATION`, `KOEDODB_PROJECT` | the ids of the organization and of the project, for `branch` (or `--organization`, `--project`) |
 | `KOEDODB_API_URL` or `--api` | the API (default `https://api.koedodb.com/v1`; https only, apart from `localhost` for tests) |
 
 ## The API it uses

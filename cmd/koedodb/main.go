@@ -58,10 +58,11 @@ func main() {
 	os.Exit(run(ctx, os.Args[1:], env, os.Stdout, os.Stderr, nil))
 }
 
-const usage = `koedodb deploys a static site to KoedoDB.
+const usage = `koedodb deploys a static site to KoedoDB, and makes branches of a project's database.
 
 Usage:
   koedodb deploy [directory] [--json] [--force] [--allow-no-index] [--api URL]
+  koedodb branch create|list|get|delete ...   (see koedodb branch help)
   koedodb version
 
 deploy packs the directory the build writes the site to (dist, build or out; with no directory
@@ -95,6 +96,8 @@ func run(ctx context.Context, args []string, env func(string) string, stdout, st
 		return exitOK
 	case "deploy":
 		return runDeploy(ctx, args[1:], env, stdout, stderr, httpClient)
+	case "branch":
+		return runBranch(ctx, args[1:], env, stdout, stderr, httpClient)
 	}
 	fmt.Fprintf(stderr, "koedodb: %q is not a command. See `koedodb help`.\n", args[0])
 	return exitUsage
@@ -156,16 +159,9 @@ func runDeploy(ctx context.Context, args []string, env func(string) string, stdo
 		// Not echoed: it may be a secret that was set wrong (a line break in it would make a header of the request).
 		return fail(exitAuth, "invalid_token", tokenVarName+" has a character a token does not have (a space or a line break inside, or something that is not plain text). Copy the token again from the console.")
 	}
-	if apiURL == "" {
-		apiURL = env("KOEDODB_API_URL")
-	}
-	if apiURL == "" {
-		apiURL = defaultAPI
-	}
-	u, err := url.Parse(apiURL)
-	loopback := err == nil && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1")
-	if err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && loopback)) || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return fail(exitUsage, "usage", "the API address must be an https address of a host and a path, with no user name, query or fragment.")
+	apiURL, u, loopback, err := checkAPI(apiURL, env)
+	if err != nil {
+		return fail(exitUsage, "usage", err.Error())
 	}
 	// The token goes to this address. If something other than the console's own address set it (an environment file a tool loaded, say), it is better to be told than to find out.
 	if !loopback && !trustedHost(u.Hostname()) && !asJSON {
@@ -189,6 +185,22 @@ func runDeploy(ctx context.Context, args []string, env func(string) string, stdo
 		fmt.Fprintf(stdout, "%s\n", shown)
 	}
 	return exitOK
+}
+
+// checkAPI takes the API address (the flag, else KOEDODB_API_URL, else the default) and checks it: https, a host and a path, no user name, query or fragment (http only for a test on this machine).
+func checkAPI(apiURL string, env func(string) string) (string, *url.URL, bool, error) {
+	if apiURL == "" {
+		apiURL = env("KOEDODB_API_URL")
+	}
+	if apiURL == "" {
+		apiURL = defaultAPI
+	}
+	u, err := url.Parse(apiURL)
+	loopback := err == nil && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1")
+	if err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && loopback)) || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", nil, false, errors.New("the API address must be an https address of a host and a path, with no user name, query or fragment.")
+	}
+	return apiURL, u, loopback, nil
 }
 
 // classify turns an error into an exit status, a stable kind and a message that says what to do.

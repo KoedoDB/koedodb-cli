@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `koedodb branch create|list|get|delete`: branches of a project's database (an empty database of its own, for a pull request or a try). The access token of the login is read from `KOEDODB_ACCESS_TOKEN`, the project from `--organization` and `--project` (or `KOEDODB_ORGANIZATION` and `KOEDODB_PROJECT`). The password of a new branch is shown once; `delete` needs `--yes` and never asks; `--json` and exit status as for `deploy` (`4` is a refusal by KoedoDB).
 - Built with Go 1.26.10 (go.mod): 1.26.0 had 28 known vulnerabilities in its standard library (net/http, crypto/tls, crypto/x509, os, net/url ...). `govulncheck` runs in the tests and before a release.
 - `koedodb deploy [dir]`: packs a build output (the same files make the same bytes), asks the API for a presigned upload URL, uploads, and publishes. Refuses a directory that looks like a project, or has `.env` files, a symbolic link, no `index.html`, or is over the limits (100 MiB packed, 500 MiB unpacked, 20,000 files).
 - `--json`, exit status 0 to 5, the token from `KOEDODB_TOKEN`.
