@@ -81,8 +81,8 @@ func transport() *http.Transport {
 	return t
 }
 
-// UploadTimeout is the most the upload of an archive may take (100 MiB at 0.5 Mbit/s is 27 minutes).
-const UploadTimeout = 30 * time.Minute
+// UploadTimeout is the most the upload of an archive may take (3 GiB, the largest a site may be, at 5 Mbit/s is 80 minutes; the server accepts the completion for 2 hours).
+const UploadTimeout = 90 * time.Minute
 
 var codePattern = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 

@@ -223,7 +223,7 @@ func classify(err error) (int, string, string) {
 		case http.StatusNotFound:
 			return exitAuth, "not_found", "KoedoDB does not know this project for the token. Is it the token of the project you mean?"
 		case http.StatusRequestEntityTooLarge:
-			return exitInput, "archive_too_large", "the site is larger than a site may be (100 MiB packed)."
+			return exitInput, "archive_too_large", "the site is larger than the plan allows (1 GiB on the free plan, 3 GiB on the others, packed)."
 		case http.StatusConflict:
 			if apiErr.Code == "project_not_active" {
 				return exitServer, "project_not_active", "the project is not active yet (still being made, or unavailable). Try again in a minute."

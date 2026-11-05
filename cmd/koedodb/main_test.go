@@ -189,7 +189,7 @@ func TestEachFailureHasItsExitStatusAndAMessageThatSaysWhatToDo(t *testing.T) {
 	}{
 		{"the token is refused", map[string]int{"request": 401}, exitAuth, "make a new one"},
 		{"the project is not the token's", map[string]int{"request": 404}, exitAuth, "does not know this project"},
-		{"the site is too large", map[string]int{"request": 413}, exitInput, "100 MiB"},
+		{"the site is too large", map[string]int{"request": 413}, exitInput, "1 GiB on the free plan"},
 		{"the project is not active", map[string]int{"request": 409}, exitServer, "not active yet"},
 		{"the server is down", map[string]int{"request": 503}, exitServer, "run it again"},
 		{"the store refuses the upload", map[string]int{"put": 403}, exitServer, "run it again"},

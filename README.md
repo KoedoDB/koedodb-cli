@@ -48,7 +48,7 @@ A person or an AI tool most easily deploys the **whole project** instead of its 
 - has a file named `.env` or `.env.*`;
 - has a symbolic link (a site is plain files);
 - has no `index.html` at its top;
-- is over the limits: 100 MiB packed, 500 MiB unpacked, 20,000 files, 200 MiB for a file, 32 directories deep.
+- is over the limits: 3 GiB packed and 3 GiB unpacked (1 GiB each on the free plan, which the server checks), 20,000 files, 200 MiB for a file, 32 directories deep.
 
 `--force` deploys a directory that looks like a project or has `.env` files. `--allow-no-index` deploys one without `index.html`. The limits cannot be forced: the server checks them too.
 
@@ -102,7 +102,7 @@ With a deploy token (the project is the token's):
 | `PUT <url>` | the archive, `Content-Length` exactly the size that was asked for |
 | `POST /site/uploads/{id}/complete` | `200 {"published", "bytes", "sha256", "url", "updated_at"}` |
 
-A project may ask for 20 uploads an hour and 2 GiB a day (more is `429`, `upload_rate_limited`); an archive is 100 MiB at most. A token expires (90 days by default), and a project may have ten at a time.
+A project may ask for 20 uploads an hour and 2 GiB a day (more is `429`, `upload_rate_limited`); an archive is 3 GiB at most (1 GiB on the free plan). A token expires (90 days by default), and a project may have ten at a time.
 
 Errors are `{"error": "<code>"}` with the status; the codes are stable.
 

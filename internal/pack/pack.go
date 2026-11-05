@@ -21,8 +21,8 @@ import (
 
 // The limits of the platform (the server and the Host check them again; these only say it sooner).
 const (
-	MaxArchiveBytes  = 100 << 20
-	MaxUnpackedBytes = 500 << 20
+	MaxArchiveBytes  = 3 << 30 // the largest plan's (3 GiB); the free tier's is 1 GiB, which only the server knows (it answers 413)
+	MaxUnpackedBytes = 3 << 30
 	MaxFileBytes     = 200 << 20
 	MaxEntries       = 20000
 	MaxPathBytes     = 1024
